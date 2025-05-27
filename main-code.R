@@ -731,6 +731,10 @@ if(overwrite){
         )
     }
     
+    packages |> mutate(Maintainer=stringr::str_replace_all(Maintainer,'<','-- \\email{'),
+                       Maintainer=stringr::str_replace_all(Maintainer,'>','}'),
+                       Ref.=rep('',length(Maintainer)))
+    
     write_file(kable(packages,'latex'),paste0(folderpath,'packages.txt'))
 
   ## Figures ####
