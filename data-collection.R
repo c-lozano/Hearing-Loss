@@ -1,7 +1,11 @@
 library(readr)
 library(dplyr)
 library(nhanesA)
+library(rstudioapi)
 overwrite <- T
+
+setwd(dirname(getActiveDocumentContext()$path))
+
 # Data Wrangling ###
 
 AUQ99 <- nhanes('AUQ',includelabels = T) |> tibble()

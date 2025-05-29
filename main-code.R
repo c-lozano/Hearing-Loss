@@ -1,20 +1,25 @@
 # Setup ####
+library(knitr)
+library(rstudioapi)
+library(scales)
+library(pacman)
+library(stringr)
+library(readr)
 library(dplyr)
 library(tidyr)
 library(forcats)
 library(survey)
-library(knitr)
 library(ggeffects)
-library(pacman)
-library(readr)
 library(ggplot2)
 
+setwd(dirname(getActiveDocumentContext()$path))
 getFreshData <- F
 if(getFreshData) source('data-collection.R')
 rm(list=ls())
 
-overwrite <- F
+overwrite <- T
 makePlots <- F
+
 
 # Data wrangling ####
 folderpath <- paste0(getwd(),'/data/')
@@ -440,62 +445,138 @@ dsSubByCohort <- subset(designByCohort,inAnalysis)
 dsSubCombined_AE <- subset(designCombined_AE,inAnalysis_AE)
 dsSubByCohort_AE <- subset(designByCohort_AE,inAnalysis_AE)
 
-varNames <- c('Gender','Age','Ethnicity','Income','Education','OELN','SRHL','AEHL','AEHFHL')
-options(scipen=999)
-demoMeansAll <- as.data.frame(svymean(~Age+Gender+Ethnicity+Income+Education+OELN+SRHL,dsSubCombined))
-demoMeansCohort <- t(as.data.frame(svyby(~Age+Gender+Ethnicity+Income+Education+OELN+SRHL,~Cohort,dsSubByCohort,svymean)))[-1,]
+varNames <- c('Age','Gender','Ethnicity','Income','Education','OELN','SRHL')
+coefNames <- list(Age='Age',Gender='Female',
+                  Ethnicity=c('White','Black','Hispanic','Other'),
+                  Income=c('Under $20,000','$20,000 to $44,999', '$45,000 to $74,999','$75,000 and Over','Refused/unsure'),
+                  Education=c('Less than high school','High school graduate','Some college or more'),
+                  OELN='OELN',SRHL='SRHL')
+cohorts <- c(1999,2001,2003,2011,2015)
+demogsWeighted <- tibble('Variable'=unlist(coefNames),
+                  'Overall pct'=rep('',length(Variable)),
+                  'Overall CI'=`Overall pct`,
+                  '1999 pct'=`Overall pct`,
+                  '1999 CI'=`Overall pct`,
+                  '2001 pct'=`Overall pct`,
+                  '2001 CI'=`Overall pct`,
+                  '2003 pct'=`Overall pct`,
+                  '2003 CI'=`Overall pct`,
+                  '2011 pct'=`Overall pct`,
+                  '2011 CI'=`Overall pct`,
+                  '2015 pct'=`Overall pct`,
+                  '2015 CI'=`Overall pct`)
 
-demogsWeighted <- tibble(name=rownames(demoMeansAll),
-                         Overall=rep('',nrow(demoMeansAll)),
-                      '1999--2000'=rep('',nrow(demoMeansAll)),
-                      '2001--2002'=rep('',nrow(demoMeansAll)),
-                      '2003--2004'=rep('',nrow(demoMeansAll)),
-                      '2011--2012'=rep('',nrow(demoMeansAll)),
-                      '2015--2016'=rep('',nrow(demoMeansAll)))
-demogsWeighted[1,2] <- paste0(round(demoMeansAll[1,1],2),' ','(',round(demoMeansAll[1,2],2),')')
-for (i in 2:nrow(demoMeansAll)){
-  demogsWeighted[i,2] <- paste0(
-    round(100*demoMeansAll[i,1],2),' ','(',round(100*demoMeansAll[i,2],2),')'
-  )
-} 
+demoMeansAll <- as_tibble(svymean(reformulate(varNames),dsSubCombined),rownames='Variable') |> 
+  select(!SE) |> 
+  bind_cols(confint((svymean(reformulate(varNames),dsSubCombined)))) |> 
+  rename(ci_l=`2.5 %`,
+         ci_u=`97.5 %`)
+demoMeansCohort <- as_tibble(svyby(reformulate(varNames),~Cohort,dsSubByCohort,svymean,vartype='ci'))
+names(demoMeansCohort)[2:20] <- paste0('mean','.',names(demoMeansCohort)[2:20])
+demoMeansCohort <- demoMeansCohort |> 
+  pivot_longer(!Cohort,names_to=c('.value','Variable'),names_sep='\\.')
 
-for(j in 3:ncol(demogsWeighted)){
-  demogsWeighted[1,j] <- paste0(round(demoMeansCohort[1,j-2],2),' ','(',round(demoMeansCohort[1+19,j-2],2),')')
-  for(i in 2:nrow(demogsWeighted)){
-    demogsWeighted[i,j] <- paste0(
-      round(100*demoMeansCohort[i,j-2],2),' ','(',round(100*demoMeansCohort[i+19,j-2],2),')'
-    )
+for (v in 1:length(varNames)){
+  if(varNames[v]=='Age'){
+    ovl <- demoMeansAll |> 
+      filter(Variable=='Age')
+    demogsWeighted[which(unlist(coefNames)=='Age'),2] <- format(round(ovl$mean,1),nsmall=1)
+    demogsWeighted[which(unlist(coefNames)=='Age'),3] <- paste0('[',format(round(ovl$ci_l,1),nsmall=1),'--',format(round(ovl$ci_u,1),nsmall=1),']')
+    
+    for (y in 1:length(cohorts)){
+      yr <- demoMeansCohort |> 
+        filter(Cohort==cohorts[y] & Variable=='Age')
+      demogsWeighted[which(unlist(coefNames)=='Age'),2+2*y] <- format(round(yr$mean,1),nsmall=1)
+      demogsWeighted[which(unlist(coefNames)=='Age'),3+2*y] <- paste0('[',format(round(yr$ci_l,1),nsmall=1),'--',format(round(yr$ci_u,1),nsmall=1),']')
+    }
+    next
+  }
+  outcomes <- coefNames[[v]]
+  for (o in 1:length(outcomes)){
+    vbl <- paste0(varNames[v],outcomes[o])
+    if(vbl=='OELNOELN') vbl <- 'OELNYes'
+    if(vbl=='SRHLSRHL') vbl <- 'SRHLYes'
+    ovl <- demoMeansAll |> 
+      filter(Variable==vbl)
+    demogsWeighted[which(unlist(coefNames)==outcomes[o]),2] <- format(round(100*ovl$mean,1),nsmall=1)
+    demogsWeighted[which(unlist(coefNames)==outcomes[o]),3] <- paste0('[',format(round(100*ovl$ci_l,1),nsmall=1),'--',format(round(100*ovl$ci_u,1),nsmall=1),']')
+    
+    for (y in 1:length(cohorts)){
+      yr <- demoMeansCohort |> 
+        filter(Cohort==cohorts[y] & Variable==vbl)
+      demogsWeighted[which(unlist(coefNames)==outcomes[o]),2+2*y] <- format(round(100*yr$mean,1),nsmall=1)
+      demogsWeighted[which(unlist(coefNames)==outcomes[o]),3+2*y] <- paste0('[',format(round(100*yr$ci_l,1),nsmall=1),'--',format(round(100*yr$ci_u,1),nsmall=1),']')
+    }
   }
 }
 
 
 
-demoMeansAll_AE <- as.data.frame(svymean(~Age+Gender+Ethnicity+Income+Education+OELN+SRHL+AEHL+AEHFHL,dsSubCombined_AE))
-demoMeansCohort_AE <- t(as.data.frame(svyby(~Age+Gender+Ethnicity+Income+Education+OELN+SRHL+AEHL+AEHFHL,~Cohort,dsSubByCohort_AE,svymean)))[-1,]
+varNames <- c('Age','Gender','Ethnicity','Income','Education','OELN','SRHL','AEHL','AEHFHL')
+coefNames <- list(Age='Age',Gender='Female',
+                  Ethnicity=c('White','Black','Hispanic','Other'),
+                  Income=c('Under $20,000','$20,000 to $44,999', '$45,000 to $74,999','$75,000 and Over','Refused/unsure'),
+                  Education=c('Less than high school','High school graduate','Some college or more'),
+                  OELN='OELN',SRHL='SRHL',AEHL='AEHL',AEHFHL='AEHFHL')
+demogsWeighted_AE <- tibble('Variable'=unlist(coefNames),
+                         'Overall pct'=rep('',length(Variable)),
+                         'Overall CI'=`Overall pct`,
+                         '1999 pct'=`Overall pct`,
+                         '1999 CI'=`Overall pct`,
+                         '2001 pct'=`Overall pct`,
+                         '2001 CI'=`Overall pct`,
+                         '2003 pct'=`Overall pct`,
+                         '2003 CI'=`Overall pct`,
+                         '2011 pct'=`Overall pct`,
+                         '2011 CI'=`Overall pct`,
+                         '2015 pct'=`Overall pct`,
+                         '2015 CI'=`Overall pct`)
 
-demogsWeighted_AE <- tibble(name=rownames(demoMeansAll_AE),
-                         Overall=rep('',nrow(demoMeansAll_AE)),
-                         '1999--2000'=rep('',nrow(demoMeansAll_AE)),
-                         '2001--2002'=rep('',nrow(demoMeansAll_AE)),
-                         '2003--2004'=rep('',nrow(demoMeansAll_AE)),
-                         '2011--2012'=rep('',nrow(demoMeansAll_AE)),
-                         '2015--2016'=rep('',nrow(demoMeansAll_AE)))
-demogsWeighted_AE[1,2] <- paste0(round(demoMeansAll_AE[1,1],2),' ','(',round(demoMeansAll_AE[1,2],2),')')
-for (i in 2:nrow(demoMeansAll_AE)){
-  demogsWeighted_AE[i,2] <- paste0(
-    round(100*demoMeansAll_AE[i,1],2),' ','(',round(100*demoMeansAll_AE[i,2],2),')'
-  )
-} 
+demoMeansAll <- as_tibble(svymean(reformulate(varNames),dsSubCombined_AE),rownames='Variable') |> 
+  select(!SE) |> 
+  bind_cols(confint((svymean(reformulate(varNames),dsSubCombined_AE)))) |> 
+  rename(ci_l=`2.5 %`,
+         ci_u=`97.5 %`)
+demoMeansCohort <- as_tibble(svyby(reformulate(varNames),~Cohort,dsSubByCohort_AE,svymean,vartype='ci'))
+names(demoMeansCohort)[2:24] <- paste0('mean','.',names(demoMeansCohort)[2:24])
+demoMeansCohort <- demoMeansCohort |> 
+  pivot_longer(!Cohort,names_to=c('.value','Variable'),names_sep='\\.')
 
-for(j in 3:ncol(demogsWeighted_AE)){
-  demogsWeighted_AE[1,j] <- paste0(round(demoMeansCohort_AE[1,j-2],2),' ','(',round(demoMeansCohort_AE[1+22,j-2],2),')')
-  for(i in 2:nrow(demogsWeighted_AE)){
-    demogsWeighted_AE[i,j] <- paste0(
-      round(100*demoMeansCohort_AE[i,j-2],2),' ','(',round(100*demoMeansCohort_AE[i+22,j-2],2),')'
-    )
+for (v in 1:length(varNames)){
+  if(varNames[v]=='Age'){
+    ovl <- demoMeansAll |> 
+      filter(Variable=='Age')
+    demogsWeighted_AE[which(unlist(coefNames)=='Age'),2] <- format(round(ovl$mean,1),nsmall=1)
+    demogsWeighted_AE[which(unlist(coefNames)=='Age'),3] <- paste0('[',format(round(ovl$ci_l,1),nsmall=1),'--',format(round(ovl$ci_u,1),nsmall=1),']')
+    
+    for (y in 1:length(cohorts)){
+      yr <- demoMeansCohort |> 
+        filter(Cohort==cohorts[y] & Variable=='Age')
+      demogsWeighted_AE[which(unlist(coefNames)=='Age'),2+2*y] <- format(round(yr$mean,1),nsmall=1)
+      demogsWeighted_AE[which(unlist(coefNames)=='Age'),3+2*y] <- paste0('[',format(round(yr$ci_l,1),nsmall=1),'--',format(round(yr$ci_u,1),nsmall=1),']')
+    }
+    next
+  }
+  outcomes <- coefNames[[v]]
+  for (o in 1:length(outcomes)){
+    vbl <- paste0(varNames[v],outcomes[o])
+    if(vbl=='OELNOELN') vbl <- 'OELNYes'
+    if(vbl=='SRHLSRHL') vbl <- 'SRHLYes'
+    if(vbl=='AEHLAEHL') vbl <- 'AEHLYes'
+    if(vbl=='AEHFHLAEHFHL') vbl <- 'AEHFHLYes'
+    ovl <- demoMeansAll |> 
+      filter(Variable==vbl)
+    demogsWeighted_AE[which(unlist(coefNames)==outcomes[o]),2] <- format(round(100*ovl$mean,1),nsmall=1)
+    demogsWeighted_AE[which(unlist(coefNames)==outcomes[o]),3] <- paste0('[',format(round(100*ovl$ci_l,1),nsmall=1),'--',format(round(100*ovl$ci_u,1),nsmall=1),']')
+    
+    for (y in 1:length(cohorts)){
+      yr <- demoMeansCohort |> 
+        filter(Cohort==cohorts[y] & Variable==vbl)
+      demogsWeighted_AE[which(unlist(coefNames)==outcomes[o]),2+2*y] <- format(round(100*yr$mean,1),nsmall=1)
+      demogsWeighted_AE[which(unlist(coefNames)==outcomes[o]),3+2*y] <- paste0('[',format(round(100*yr$ci_l,1),nsmall=1),'--',format(round(100*yr$ci_u,1),nsmall=1),']')
+    }
   }
 }
-options(scipen=9999)
 
 # Regressions ####
 
@@ -503,7 +584,7 @@ options(scipen=9999)
 varNames <- c('Cohort','Age','Gender','Ethnicity','Income','Education','OELN','Cohort*OELN')
 coefNames <- list(Cohort='Cohort',Age='Age',Gender='Female',
                   Ethnicity=c('Black','Hispanic','Other'),
-                  Income=c('$20,000 to $44,999', '$45,000 to $74,000','$75,000 and Over','Refused/unsure'),
+                  Income=c('$20,000 to $44,999', '$45,000 to $74,999','$75,000 and Over','Refused/unsure'),
                   Education=c('High school graduate','Some college or more'),
                   OELN='Yes','Cohort*OELN'='Cohort*OELN')
 odds_SR <- tibble('Variable'=unlist(coefNames),
@@ -688,7 +769,7 @@ if(makePlots){
     geom_ribbon(aes(ymin=conf.low,ymax=conf.high),alpha=0.15,linetype=0)+
     geom_line(linewidth=0.8)+
     scale_x_continuous(breaks=c(1999,2001,2003,2011,2015))+
-    scale_y_continuous(labels=scales::percent)+
+    scale_y_continuous(labels=percent)+
     scale_color_brewer(palette='Set1',direction=-1)+
     scale_fill_brewer(palette='Set1',direction=-1)+
     labs(x='Cohort',
@@ -697,6 +778,7 @@ if(makePlots){
          subtitle='Separated by metric of hearing loss')+
     theme_bw()+
     theme(panel.grid.minor.x=element_blank())
+  plotComb
 }
 
 # Writing to file ####
@@ -711,6 +793,8 @@ if(overwrite){
   if(!dir.exists(folderpath)) dir.create(folderpath)
   write_file(kable(demogs,'latex'),paste0(folderpath,'demogs.txt'))
   write_file(kable(demogs_AE,'latex'),paste0(folderpath,'demogs_AE.txt'))
+  write_file(kable(demogsWeighted,'latex'),paste0(folderpath,'demogsWeighted.txt'))
+  write_file(kable(demogsWeighted_AE,'latex'),paste0(folderpath,'demogsWeighted_AE.txt'))
   write_file(kable(odds_SR,'latex'),paste0(folderpath,'oddsSR.txt'))
   write_file(kable(odds_AE,'latex'),paste0(folderpath,'oddsAE.txt'))
   write_file(kable(odds_AEHF,'latex'),paste0(folderpath,'oddsAEHF.txt'))
@@ -731,8 +815,8 @@ if(overwrite){
         )
     }
     
-    packages |> mutate(Maintainer=stringr::str_replace_all(Maintainer,'<','-- \\email{'),
-                       Maintainer=stringr::str_replace_all(Maintainer,'>','}'),
+    packages <- packages |> mutate(Maintainer=str_replace_all(Maintainer,'<','-- \\email{'),
+                       Maintainer=str_replace_all(Maintainer,'>','}'),
                        Ref.=rep('',length(Maintainer)))
     
     write_file(kable(packages,'latex'),paste0(folderpath,'packages.txt'))
