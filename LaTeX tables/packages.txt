@@ -3,8 +3,6 @@
 \hline
 Package name & Version & Maintainer & Ref.\\
 \hline
-nhanesA & 1.3 & Christopher Endres -- email\{cjendres1@gmail.com\} & \\
-\hline
 ggplot2 & 3.5.2 & Thomas Lin Pedersen -- email\{thomas.pedersen@posit.co\} & \\
 \hline
 ggeffects & 2.2.1 & Daniel Lüdecke -- email\{d.luedecke@uke.de\} & \\
